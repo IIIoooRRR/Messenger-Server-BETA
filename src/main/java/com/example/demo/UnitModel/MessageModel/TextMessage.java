@@ -1,19 +1,13 @@
 package com.example.demo.UnitModel.MessageModel;
-
-import com.example.demo.MessageManagement.MessageRepository.MessageRepository;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
-import lombok.AllArgsConstructor;
 import lombok.Data;
-import lombok.NoArgsConstructor;
 
 import java.sql.Timestamp;
 @Entity
 @Table(name = "text_message")
 @Data
-@NoArgsConstructor
-@AllArgsConstructor
 public class TextMessage {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

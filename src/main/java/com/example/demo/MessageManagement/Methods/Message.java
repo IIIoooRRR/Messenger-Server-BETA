@@ -1,6 +1,5 @@
 package com.example.demo.MessageManagement.Methods;
 
-import com.example.demo.Exception.MessageNotFound;
 import com.example.demo.Exception.UserNotFoundWithId;
 import com.example.demo.MessageManagement.MessageRepository.MessageRepository;
 import com.example.demo.UnitModel.MessageModel.TextMessage;
@@ -39,7 +38,7 @@ public class Message {
         if (usersRepository.existsById(toUser)) {
             List<TextMessage> messageToUser = messageRepository.findByToUser(toUser);
                 if(messageToUser.isEmpty()) {
-                    throw new MessageNotFound();
+                    return;
                 }
             messagingTemplate.convertAndSendToUser(toUser, "/queue/messages", messageToUser);
                 messageRepository.deleteAll(messageToUser);

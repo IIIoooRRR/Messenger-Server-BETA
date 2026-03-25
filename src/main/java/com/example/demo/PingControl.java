@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class PingControl {
 @GetMapping("/ping")
     public String ping() {
-    return "Лев бебебебе";
+    return "ЛЕВ ХУЕСОС ЕБУЧИЙ БЛЯТЬ УМРИ НАХУЙ";
 }
 
 }

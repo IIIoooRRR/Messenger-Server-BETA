@@ -1,0 +1,1254 @@
+Subject: [PATCH] feat: BETA v2.0 - lightweight messenger without Kafka
+---
+Index: .gitignore
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/.gitignore b/.gitignore
+--- a/.gitignore	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/.gitignore	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -35,7 +35,8 @@
+ =======
+ # Compiled class file
+ *.class
+-
++# Application file
++*.application
+ # Log file
+ *.log
+ 
+Index: Dockerfile
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/Dockerfile b/Dockerfile
+new file mode 100644
+--- /dev/null	(revision c988de949bd9574b9612f4f9548e6e903369322f)
++++ b/Dockerfile	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -0,0 +1,4 @@
++FROM openjdk:21-jdk-slim
++COPY target/*.jar app.jar
++EXPOSE 25565
++ENTRYPOINT ["java", "-jar", "/app.jar"]
+\ No newline at end of file
+Index: README.md
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/README.md b/README.md
+--- a/README.md	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/README.md	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,63 +1,64 @@
+-# Messenger-Server-BETA-v1.0-
+-Легковесный мессенджер с асинхронной архитектурой на WebSocket и Kafka.  
+-Сервер не хранит историю сообщений — всё на клиенте.
++# Messenger-Server-BETA-v2.0
++
++Легковесный мессенджер с асинхронной архитектурой на WebSocket и PostgreSQL.  
++Сервер хранит **исключительно не доставленные сообщения**, удаляя их после отправки.  
++Проект ориентирован на разработку локальных мессенджеров для малых групп.
+ 
+ ## 🚀 Технологии
+-- Джава 17
+-- Spring Boot 3.4.2 (Web, JPA, WebSocket, Validation)
+-- Kafka — буфферизация(пока в процессе разработки), ассинхронность сообщений
+-- PostgreSQL / H2 — хранение пользователей
+-- Lombok — уменьшение количества дефолтного кода
+-- Сборка на Мавен
+-- Jakarta validation - для уменьшения количества обработки ошибок. Все поставлено при приеме данных на сервер
++- **Java 25**
++- **Spring Boot 3.4.2** (Web, JPA, WebSocket, Validation)
++- **PostgreSQL / H2** — хранение пользователей и оффлайн-сообщений
++- **Lombok** — уменьшение шаблонного кода
++- **Maven** — сборка
++- **Jakarta Validation** — валидация на входе
+ 
+-  ## 📌 Особенности
+-- Сообщения не хранятся на сервере* - история только на клиенте
+-- ID генерируется из номера (MD5 + соль при коллизиях)
+-- Асинхронность - WebSocket не блокируется
++## 📌 Особенности
++- Сообщения хранятся **только до доставки** (оффлайн-буфер)
++- ID генерируется из имени пользователя (MD5 + соль при коллизиях)
++- **Виртуальные потоки** Java 25 для минимальной нагрузки
++- Асинхронная обработка WebSocket событий
++- Поиск пользователей по имени (отдельный индекс)
+ 
+-  ## Планы
+-  - Убрать sout, добавить тесты(все, что было там - быстрый тест, много лишнего sout, т.к. проверял уязвимости
+-  - Добавить обработку изображений
+-  - Сделать больше статусов сети(IDLE и подобное)
+-  - Оптимизировать для масс
+- 
+-  # Принцип работы:
++## 📋 Планы
++- [ ] Заменить `System.out.println` на логирование
++- [ ] Написать интеграционные тесты
++- [ ] Добавить обработку изображений
++- [ ] Расширить статусы пользователя (IDLE, DND)
++- [ ] Оптимизировать для слабых ПК
++
++## 🔧 Принцип работы
++
+ ### 1. Регистрация пользователя
+-`POST /add/user` — сервер генерирует ID на основе номера (MD5), сохраняет в БД.
++`POST /add/user` — сервер генерирует ID на основе имени (MD5), сохраняет в БД.
+ 
+ ### 2. WebSocket подключение
+-Клиент шлет заголовок `id` при коннекте.  
++Клиент передаёт заголовок `id` при коннекте.  
+ Сервер:
+-- Моментально освобождает сетевой поток
+-- Кидает задачу в **пул №1** (разбор события)
+-- Ставит статус `ONLINE` через **пул №2** (работа с БД)
++- Освобождает сетевой поток мгновенно
++- В виртуальном потоке обновляет статус пользователя на `ONLINE`
+ 
+ ### 3. Отправка сообщения
+-`@MessageMapping("/chat/send")` → Kafka (`user-mess` topic)  
+-Консьюмер забирает → `SimpMessagingTemplate` отправляет получателю
++`@MessageMapping("/chat/send")` → Сервер проверяет статус получателя:
++- **Онлайн** → сообщение отправляется мгновенно через WebSocket
++- **Оффлайн** → сообщение сохраняется в БД до подключения получателя
++
++### 4. Получение оффлайн-сообщений
++При подключении пользователь отправляет запрос `@MessageMapping("/chat/get")` →  
++Сервер отдаёт все накопленные сообщения и удаляет их из БД.
+ 
+ ## 🐞 Обработка ошибок
+-
+-- `UserNotFound` (404) — если пользователя нет
+-- `MessageNotFound` (404) — заглушка на будущее
++- `UserNotFoundWithId` (404) — пользователь не найден
++- `UsernameExists` (409) — имя уже занято
++- `MessageNotFound` (404) — нет непрочитанных сообщений
++- `SendToNullUser` (404) — попытка отправить сообщение несуществующему пользователю
+ - Валидация входных данных через `@Valid`
+ 
+ ## 📦 Запуск
+ 
+ ```bash
+-# Запустить Kafka (если локально)
+-# или настроить в application.properties
+-spring.kafka.bootstrap-servers=localhost:9092
++# Клонировать репозиторий
++git clone https://github.com/iiiooorrr2010-stack/Messenger-Server-BETA-v2.0-lightweight
++cd Messenger-Server-BETA-v2.0-lightweight
+ 
+ # Запустить приложение
+-./mvnw spring-boot:run
+-```
+-
+-
+-# Сontact information:
+-telegramm: @iiiiooorrr
+-name: Йор
+-Рабочее время с 8:00 до 19:00 по МСК(UTC +3)
+-### Примечание!!!
+-ПРОЕКТ ИСКЛЮЧИТЕЛЬНО В ЦЕЛЯХ ОБУЧЕНИЯ. Коммерция пока что не планируется. С предложениями по работе, пожалуйста, писать осознанно(если такое найдется) - я еще обучаюсь в школе. Времени у меня пусть и достаточно, но я не смогу отвечать ежечасно. Так же могу принять заказ на разработку ботов в индивидуальном формате
++./mvnw spring-boot:run
+\ No newline at end of file
+Index: docker-compose.yml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/docker-compose.yml b/docker-compose.yml
+--- a/docker-compose.yml	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/docker-compose.yml	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,19 +1,21 @@
++version: '3.8'
+ services:
+-  zookeeper:
+-    image: confluentinc/cp-zookeeper:7.5.0
++  postgres:
++    image: postgres:15
+     environment:
+-      ZOOKEEPER_CLIENT_PORT: 2181
++      POSTGRES_DB: messenger
++      POSTGRES_USER: postgres
++      POSTGRES_PASSWORD: ${DB_PASSWORD}
+     ports:
+-      - "2181:2181"
++      - "5432:5432"
++    volumes:
++      - postgres_data:/var/lib/postgresql/data
+ 
+-  kafka:
+-    image: confluentinc/cp-kafka:7.5.0
++  app:
++    build: .
+     depends_on:
+-      - zookeeper
+-    ports:
+-      - "9092:9092"
++      - postgres
+     environment:
+-      KAFKA_BROKER_ID: 1
+-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+\ No newline at end of file
++      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/messenger
++    ports:
++      - "25565:25565"
+\ No newline at end of file
+Index: pom.xml
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/pom.xml b/pom.xml
+--- a/pom.xml	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/pom.xml	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -32,11 +32,6 @@
+             <groupId>org.springframework.boot</groupId>
+             <artifactId>spring-boot-starter-web</artifactId>
+         </dependency>
+-        <dependency>
+-            <groupId>org.springframework.kafka</groupId>
+-            <artifactId>spring-kafka</artifactId>
+-        </dependency>
+-
+         <dependency>
+             <groupId>com.fasterxml.jackson.core</groupId>
+             <artifactId>jackson-databind</artifactId>
+Index: repository.env
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/repository.env b/repository.env
+new file mode 100644
+--- /dev/null	(revision c988de949bd9574b9612f4f9548e6e903369322f)
++++ b/repository.env	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -0,0 +1,1 @@
++DB_PASSWORD=postgres
+\ No newline at end of file
+Index: src/main/java/com/example/demo/UtilCode/Exception/MessageNotFound.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UtilCode/Exception/MessageNotFound.java b/src/main/java/com/example/demo/Exception/MessageNotFound.java
+rename from src/main/java/com/example/demo/UtilCode/Exception/MessageNotFound.java
+rename to src/main/java/com/example/demo/Exception/MessageNotFound.java
+--- a/src/main/java/com/example/demo/UtilCode/Exception/MessageNotFound.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/main/java/com/example/demo/Exception/MessageNotFound.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,6 +1,5 @@
+-package com.example.demo.UtilCode.Exception;
++package com.example.demo.Exception;
+ 
+-import jakarta.servlet.annotation.HttpConstraint;
+ import org.springframework.http.HttpStatus;
+ import org.springframework.web.bind.annotation.ResponseStatus;
+ 
+Index: src/main/java/com/example/demo/UtilCode/Exception/SendToNullUser.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UtilCode/Exception/SendToNullUser.java b/src/main/java/com/example/demo/Exception/SendToNullUser.java
+rename from src/main/java/com/example/demo/UtilCode/Exception/SendToNullUser.java
+rename to src/main/java/com/example/demo/Exception/SendToNullUser.java
+--- a/src/main/java/com/example/demo/UtilCode/Exception/SendToNullUser.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/main/java/com/example/demo/Exception/SendToNullUser.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,4 +1,4 @@
+-package com.example.demo.UtilCode.Exception;
++package com.example.demo.Exception;
+ 
+ import lombok.extern.slf4j.Slf4j;
+ import org.springframework.http.HttpStatus;
+Index: src/main/java/com/example/demo/UtilCode/Exception/UserNotFoundWithNum.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UtilCode/Exception/UserNotFoundWithNum.java b/src/main/java/com/example/demo/Exception/UserNameIndexNotFound.java
+rename from src/main/java/com/example/demo/UtilCode/Exception/UserNotFoundWithNum.java
+rename to src/main/java/com/example/demo/Exception/UserNameIndexNotFound.java
+--- a/src/main/java/com/example/demo/UtilCode/Exception/UserNotFoundWithNum.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/main/java/com/example/demo/Exception/UserNameIndexNotFound.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,4 +1,4 @@
+-package com.example.demo.UtilCode.Exception;
++package com.example.demo.Exception;
+ 
+ import lombok.extern.slf4j.Slf4j;
+ import org.springframework.http.HttpStatus;
+@@ -6,8 +6,8 @@
+ 
+ @Slf4j
+ @ResponseStatus(HttpStatus.NOT_FOUND)
+-public class UserNotFoundWithNum extends RuntimeException{
+-    public UserNotFoundWithNum(String num) {
++public class UserNameIndexNotFound extends RuntimeException{
++    public UserNameIndexNotFound(String num) {
+         super("User Not Found \n ERROR 404");
+         log.error("User not Found With Num: {}", num);
+     }
+Index: src/main/java/com/example/demo/Exception/UserNotCreated.java
+===================================================================
+diff --git a/src/main/java/com/example/demo/Exception/UserNotCreated.java b/src/main/java/com/example/demo/Exception/UserNotCreated.java
+new file mode 100644
+--- /dev/null	(revision c988de949bd9574b9612f4f9548e6e903369322f)
++++ b/src/main/java/com/example/demo/Exception/UserNotCreated.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -0,0 +1,12 @@
++package com.example.demo.Exception;
++
++import com.example.demo.UnitModel.UserModel.User;
++import lombok.extern.slf4j.Slf4j;
++
++@Slf4j
++public class UserNotCreated extends RuntimeException {
++    public UserNotCreated(User user) {
++        super();
++      log.error("Попытка изменить несуществующего пользователя! {}", user);
++    }
++}
+Index: src/main/java/com/example/demo/UtilCode/Exception/UserNotFoundWithId.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UtilCode/Exception/UserNotFoundWithId.java b/src/main/java/com/example/demo/Exception/UserNotFoundWithId.java
+rename from src/main/java/com/example/demo/UtilCode/Exception/UserNotFoundWithId.java
+rename to src/main/java/com/example/demo/Exception/UserNotFoundWithId.java
+--- a/src/main/java/com/example/demo/UtilCode/Exception/UserNotFoundWithId.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/main/java/com/example/demo/Exception/UserNotFoundWithId.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,4 +1,4 @@
+-package com.example.demo.UtilCode.Exception;
++package com.example.demo.Exception;
+ 
+ import lombok.extern.slf4j.Slf4j;
+ import org.springframework.http.HttpStatus;
+Index: src/main/java/com/example/demo/Exception/UsernameExists.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/Exception/UsernameExists.java b/src/main/java/com/example/demo/Exception/UsernameExists.java
+new file mode 100644
+--- /dev/null	(revision c988de949bd9574b9612f4f9548e6e903369322f)
++++ b/src/main/java/com/example/demo/Exception/UsernameExists.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -0,0 +1,11 @@
++package com.example.demo.Exception;
++
++import lombok.extern.slf4j.Slf4j;
++
++@Slf4j
++public class UsernameExists extends RuntimeException {
++    public UsernameExists(String name) {
++        super("The username exists " + name);
++            log.info("The username exists: {}", name);
++    }
++}
+Index: src/main/java/com/example/demo/MessageManagement/MessageRepository/MessageRepository.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/MessageManagement/MessageRepository/MessageRepository.java b/src/main/java/com/example/demo/MessageManagement/MessageRepository/MessageRepository.java
+new file mode 100644
+--- /dev/null	(revision c988de949bd9574b9612f4f9548e6e903369322f)
++++ b/src/main/java/com/example/demo/MessageManagement/MessageRepository/MessageRepository.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -0,0 +1,10 @@
++package com.example.demo.MessageManagement.MessageRepository;
++
++import com.example.demo.UnitModel.MessageModel.TextMessage;
++import org.springframework.data.jpa.repository.JpaRepository;
++
++import java.util.List;
++
++public interface MessageRepository extends JpaRepository<TextMessage, String> {
++    List<TextMessage> findByToUser(String toUser);
++}
+Index: src/main/java/com/example/demo/MessageManagement/Methods/Message.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/MessageManagement/Methods/Message.java b/src/main/java/com/example/demo/MessageManagement/Methods/Message.java
+new file mode 100644
+--- /dev/null	(revision c988de949bd9574b9612f4f9548e6e903369322f)
++++ b/src/main/java/com/example/demo/MessageManagement/Methods/Message.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -0,0 +1,50 @@
++package com.example.demo.MessageManagement.Methods;
++
++import com.example.demo.Exception.MessageNotFound;
++import com.example.demo.Exception.UserNotFoundWithId;
++import com.example.demo.MessageManagement.MessageRepository.MessageRepository;
++import com.example.demo.UnitModel.MessageModel.TextMessage;
++import com.example.demo.UnitModel.UserModel.User;
++import com.example.demo.UnitModel.UserModel.UserStatus;
++import com.example.demo.UserManagemeng.Methods.Account;
++import com.example.demo.UserManagemeng.UserRepository.UsersRepository;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.messaging.handler.annotation.Payload;
++import org.springframework.messaging.simp.SimpMessagingTemplate;
++import org.springframework.stereotype.Component;
++import org.springframework.transaction.annotation.Transactional;
++
++import java.util.List;
++
++@Component
++public class Message {
++    @Autowired
++    private MessageRepository messageRepository;
++    @Autowired
++    private UsersRepository usersRepository;
++    @Autowired
++    private SimpMessagingTemplate messagingTemplate;
++    @Autowired
++    private Account account;
++    public void sendText(@Payload TextMessage textMessage) {
++        User user = account.getUser(textMessage.getToUser());
++        if (user.getUserStatus().equals(UserStatus.ONLINE) || user.getUserStatus().equals(UserStatus.IDLE)) {
++            messagingTemplate.convertAndSendToUser(textMessage.getToUser(), "/queue/messages", textMessage);
++        } else {
++            messageRepository.save(textMessage);
++        }
++    }
++    @Transactional
++    public void getText(String toUser) {
++        if (usersRepository.existsById(toUser)) {
++            List<TextMessage> messageToUser = messageRepository.findByToUser(toUser);
++                if(messageToUser.isEmpty()) {
++                    throw new MessageNotFound();
++                }
++            messagingTemplate.convertAndSendToUser(toUser, "/queue/messages", messageToUser);
++                messageRepository.deleteAll(messageToUser);
++        } else {
++            throw new UserNotFoundWithId(toUser);
++        }
++    }
++}
+Index: src/main/java/com/example/demo/UtilCode/MessageModel/TextMessage.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UtilCode/MessageModel/TextMessage.java b/src/main/java/com/example/demo/UnitModel/MessageModel/TextMessage.java
+rename from src/main/java/com/example/demo/UtilCode/MessageModel/TextMessage.java
+rename to src/main/java/com/example/demo/UnitModel/MessageModel/TextMessage.java
+--- a/src/main/java/com/example/demo/UtilCode/MessageModel/TextMessage.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/main/java/com/example/demo/UnitModel/MessageModel/TextMessage.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,5 +1,7 @@
+-package com.example.demo.UtilCode.MessageModel;
++package com.example.demo.UnitModel.MessageModel;
+ 
++import com.example.demo.MessageManagement.MessageRepository.MessageRepository;
++import jakarta.persistence.*;
+ import jakarta.validation.constraints.NotNull;
+ import jakarta.validation.constraints.Size;
+ import lombok.AllArgsConstructor;
+@@ -7,19 +9,23 @@
+ import lombok.NoArgsConstructor;
+ 
+ import java.sql.Timestamp;
++@Entity
++@Table(name = "text_message")
+ @Data
+ @NoArgsConstructor
+ @AllArgsConstructor
+ public class TextMessage {
++    @Id
++    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long mesId;
+     @Size(min=1, max= 2000, message = "Сообщение вне лимита")
+    private String textMessage;
+    private Timestamp timestamp;
++   @Column(nullable = false)
+     @NotNull
+    private String fromUser;
++    @Column(nullable = false)
+     @NotNull
+-   private String toUser;
+-   private boolean delivered;
+-    private boolean received;
++    private String toUser;
+ 
+ }
+Index: src/main/java/com/example/demo/UnitModel/UserModel/NameIndex.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UnitModel/UserModel/NameIndex.java b/src/main/java/com/example/demo/UnitModel/UserModel/NameIndex.java
+new file mode 100644
+--- /dev/null	(revision c988de949bd9574b9612f4f9548e6e903369322f)
++++ b/src/main/java/com/example/demo/UnitModel/UserModel/NameIndex.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -0,0 +1,29 @@
++package com.example.demo.UnitModel.UserModel;
++
++import jakarta.persistence.Column;
++import jakarta.persistence.Entity;
++import jakarta.persistence.Id;
++import jakarta.persistence.Table;
++import jakarta.validation.constraints.NotNull;
++import jakarta.validation.constraints.Pattern;
++import jakarta.validation.constraints.Size;
++import lombok.AllArgsConstructor;
++import lombok.Data;
++import lombok.NoArgsConstructor;
++@Entity
++@Data
++@Table(name = "NameIndex")
++@NoArgsConstructor
++@AllArgsConstructor
++public class NameIndex {
++    @Id
++    @Column(name = "Name")
++    @Size(min = 3, max = 20)
++    @Pattern(regexp = "^[a-zA-Z0-9_]+$",
++            message = "Только латиница, цифры и _")
++    @NotNull
++    private String name;
++    @Column(name = "user_Id")
++    @NotNull
++    private String id;
++}
+Index: src/main/java/com/example/demo/UserCode/UserModel/User.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserCode/UserModel/User.java b/src/main/java/com/example/demo/UnitModel/UserModel/User.java
+rename from src/main/java/com/example/demo/UserCode/UserModel/User.java
+rename to src/main/java/com/example/demo/UnitModel/UserModel/User.java
+--- a/src/main/java/com/example/demo/UserCode/UserModel/User.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/main/java/com/example/demo/UnitModel/UserModel/User.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,4 +1,4 @@
+-package com.example.demo.UserCode.UserModel;
++package com.example.demo.UnitModel.UserModel;
+ 
+ 
+ import com.fasterxml.jackson.annotation.JsonIgnore;
+@@ -25,16 +25,11 @@
+     @Column(nullable = false)
+     private String id;
+ 
+-    @Column(nullable = false)
+-    @NotBlank(message = "Номер обязателен")
+-    @Pattern(regexp = "^\\+?[0-9]{10,15}$", message = "Неверный формат номера")
+-    private String number;
+-
+     @Column(nullable = true)
+     private String avatarUrl;
+ 
+     @Column(nullable = false)
+-    @NotBlank(message = "Имя обязательно")
++    @NotNull(message = "Имя обязательно")
+     @Size(min = 3, max = 99, message = "Имя должно быть от 3 до 99 символов")
+     private String name;
+ 
+Index: src/main/java/com/example/demo/UserCode/UserModel/UserStatus.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserCode/UserModel/UserStatus.java b/src/main/java/com/example/demo/UnitModel/UserModel/UserStatus.java
+rename from src/main/java/com/example/demo/UserCode/UserModel/UserStatus.java
+rename to src/main/java/com/example/demo/UnitModel/UserModel/UserStatus.java
+--- a/src/main/java/com/example/demo/UserCode/UserModel/UserStatus.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/main/java/com/example/demo/UnitModel/UserModel/UserStatus.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,4 +1,4 @@
+-package com.example.demo.UserCode.UserModel;
++package com.example.demo.UnitModel.UserModel;
+ 
+ public enum UserStatus {
+     OFFLINE,
+Index: src/main/java/com/example/demo/UserManagemeng/Controller/UserIdController.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserManagemeng/Controller/UserIdController.java b/src/main/java/com/example/demo/UserManagemeng/Controller/UserIdController.java
+new file mode 100644
+--- /dev/null	(revision c988de949bd9574b9612f4f9548e6e903369322f)
++++ b/src/main/java/com/example/demo/UserManagemeng/Controller/UserIdController.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -0,0 +1,35 @@
++package com.example.demo.UserManagemeng.Controller;
++
++import com.example.demo.UserManagemeng.UserRepository.UsersNameIndex;
++
++
++import com.example.demo.UserManagemeng.UserRepository.UsersRepository;
++import com.example.demo.UnitModel.UserModel.User;
++import com.example.demo.UserManagemeng.Methods.Account;
++import lombok.extern.slf4j.Slf4j;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.messaging.handler.annotation.Payload;
++import org.springframework.web.bind.annotation.*;
++import jakarta.validation.Valid;
++
++@Slf4j
++@RestController
++public class UserIdController {
++    @Autowired
++    private Account account;
++    @GetMapping("/get-id-user/{id}")
++ public User httpGetAccount(@PathVariable String id) {
++   return account.getUser(id);
++ }
++
++    @PatchMapping("/update-user/{id}")
++ public User httpUserChange(@PathVariable String id, @RequestBody @Valid User changeUser) {
++        return account.changeUser(changeUser);
++    }
++
++
++   @PostMapping("/add/user")
++ public User httpCreateAccount(@RequestBody @Valid User user) {
++        return account.create(user);
++   }
++}
+\ No newline at end of file
+Index: src/main/java/com/example/demo/UserManagemeng/Controller/UserNameController.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserManagemeng/Controller/UserNameController.java b/src/main/java/com/example/demo/UserManagemeng/Controller/UserNameController.java
+new file mode 100644
+--- /dev/null	(revision c988de949bd9574b9612f4f9548e6e903369322f)
++++ b/src/main/java/com/example/demo/UserManagemeng/Controller/UserNameController.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -0,0 +1,31 @@
++package com.example.demo.UserManagemeng.Controller;
++
++import com.example.demo.UnitModel.UserModel.NameIndex;
++import com.example.demo.UnitModel.UserModel.User;
++import com.example.demo.UserManagemeng.UserRepository.UsersNameIndex;
++import com.example.demo.UserManagemeng.UserRepository.UsersRepository;
++import com.example.demo.Exception.UserNotFoundWithId;
++import com.example.demo.Exception.UserNameIndexNotFound;
++import lombok.extern.slf4j.Slf4j;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.web.bind.annotation.GetMapping;
++import org.springframework.web.bind.annotation.PathVariable;
++import org.springframework.web.bind.annotation.RestController;
++@Slf4j
++@RestController
++public class UserNameController {
++    @Autowired
++    private UsersNameIndex usersNumRepository;
++    @Autowired
++    private UsersRepository usersRepository;
++    @GetMapping("/get-name-user/{name}")
++  public User HttpGetAccount(@PathVariable String name) {
++        NameIndex lowUser = usersNumRepository.findById(name)
++                .orElseThrow(()
++                        -> new UserNameIndexNotFound(name));
++
++        return usersRepository.findById(lowUser.getId())
++                .orElseThrow(()
++                    -> new UserNotFoundWithId(lowUser.getId()));
++    }
++}
+Index: src/main/java/com/example/demo/UserManagemeng/Methods/Account.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserManagemeng/Methods/Account.java b/src/main/java/com/example/demo/UserManagemeng/Methods/Account.java
+new file mode 100644
+--- /dev/null	(revision c988de949bd9574b9612f4f9548e6e903369322f)
++++ b/src/main/java/com/example/demo/UserManagemeng/Methods/Account.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -0,0 +1,68 @@
++package com.example.demo.UserManagemeng.Methods;
++
++import com.example.demo.Exception.UserNotCreated;
++import com.example.demo.Exception.UserNotFoundWithId;
++import com.example.demo.Exception.UsernameExists;
++import com.example.demo.UnitModel.UserModel.NameIndex;
++import com.example.demo.UnitModel.UserModel.User;
++import com.example.demo.UnitModel.UserModel.UserStatus;
++import com.example.demo.UserManagemeng.UserRepository.UsersNameIndex;
++import com.example.demo.UserManagemeng.UserRepository.UsersRepository;
++import jakarta.validation.Valid;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.messaging.simp.SimpMessagingTemplate;
++import org.springframework.stereotype.Component;
++import org.springframework.transaction.annotation.Transactional;
++import org.springframework.util.DigestUtils;
++
++import java.nio.charset.StandardCharsets;
++import java.util.Random;
++
++
++@Component
++public class Account {
++    @Autowired
++    private UsersRepository usersRepository;
++    @Autowired
++    private UsersNameIndex usersNameIndex;
++    @Autowired
++    private SimpMessagingTemplate messagingTemplate;
++    Random rand = new Random();
++    @Transactional
++    public User create(@Valid User user) {
++    String id = DigestUtils.md5DigestAsHex(user.getName().getBytes(StandardCharsets.UTF_8));
++           if (usersRepository.existsById(id)) {
++
++        int x = rand.nextInt(0, 1000);
++        user.setId(id + "salt" + x);
++    }
++           if (usersNameIndex.existsById(user.getName())) {
++        throw new UsernameExists(user.getName());
++    }
++    NameIndex lowUser = new NameIndex(user.getName(), user.getId());
++            usersNameIndex.save(lowUser);
++            user.setUserStatus(UserStatus.OFFLINE);
++           return usersRepository.save(user);
++    }
++    @Transactional
++    public User changeUser(@Valid User changeUser) {
++        User oldUser = usersRepository.findById(changeUser.getId())
++                .orElseThrow(() -> {
++                    throw new UserNotCreated(changeUser);
++                });
++        if (!oldUser.getName().equals(changeUser.getName())) {
++            if(usersNameIndex.existsById(changeUser.getName())) {
++                throw new UsernameExists(changeUser.getName());
++            }
++        }
++        usersNameIndex.deleteById(oldUser.getName());
++        NameIndex lowUser = new NameIndex(changeUser.getName(), changeUser.getId());
++        usersNameIndex.save(lowUser);
++        return usersRepository.save(changeUser);
++    }
++    public User getUser( String id) {
++        return usersRepository.findById(id)
++                .orElseThrow(() -> new UserNotFoundWithId(id));
++    }
++
++}
+Index: src/main/java/com/example/demo/UserCode/methods/UserStatusChange.java
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserCode/methods/UserStatusChange.java b/src/main/java/com/example/demo/UserManagemeng/Methods/UserStatusChange.java
+rename from src/main/java/com/example/demo/UserCode/methods/UserStatusChange.java
+rename to src/main/java/com/example/demo/UserManagemeng/Methods/UserStatusChange.java
+--- a/src/main/java/com/example/demo/UserCode/methods/UserStatusChange.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/main/java/com/example/demo/UserManagemeng/Methods/UserStatusChange.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,9 +1,9 @@
+-package com.example.demo.UserCode.methods;
++package com.example.demo.UserManagemeng.Methods;
+ 
+-import com.example.demo.UtilCode.Exception.UserNotFoundWithId;
+-import com.example.demo.UserCode.UserRepository.UsersRepository;
+-import com.example.demo.UserCode.UserModel.User;
+-import com.example.demo.UserCode.UserModel.UserStatus;
++import com.example.demo.Exception.UserNotFoundWithId;
++import com.example.demo.UserManagemeng.UserRepository.UsersRepository;
++import com.example.demo.UnitModel.UserModel.User;
++import com.example.demo.UnitModel.UserModel.UserStatus;
+ import lombok.extern.slf4j.Slf4j;
+ import org.springframework.beans.factory.annotation.Autowired;
+ import org.springframework.stereotype.Component;
+Index: src/main/java/com/example/demo/UserManagemeng/UserRepository/UsersNameIndex.java
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserManagemeng/UserRepository/UsersNameIndex.java b/src/main/java/com/example/demo/UserManagemeng/UserRepository/UsersNameIndex.java
+new file mode 100644
+--- /dev/null	(revision c988de949bd9574b9612f4f9548e6e903369322f)
++++ b/src/main/java/com/example/demo/UserManagemeng/UserRepository/UsersNameIndex.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -0,0 +1,7 @@
++package com.example.demo.UserManagemeng.UserRepository;
++
++import com.example.demo.UnitModel.UserModel.NameIndex;
++import org.springframework.data.jpa.repository.JpaRepository;
++
++public interface UsersNameIndex extends JpaRepository<NameIndex, String> {
++}
+Index: src/main/java/com/example/demo/UserCode/UserRepository/UsersRepository.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserCode/UserRepository/UsersRepository.java b/src/main/java/com/example/demo/UserManagemeng/UserRepository/UsersRepository.java
+rename from src/main/java/com/example/demo/UserCode/UserRepository/UsersRepository.java
+rename to src/main/java/com/example/demo/UserManagemeng/UserRepository/UsersRepository.java
+--- a/src/main/java/com/example/demo/UserCode/UserRepository/UsersRepository.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/main/java/com/example/demo/UserManagemeng/UserRepository/UsersRepository.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,8 +1,7 @@
+-package com.example.demo.UserCode.UserRepository;
++package com.example.demo.UserManagemeng.UserRepository;
+ 
+-import com.example.demo.UserCode.UserModel.User;
++import com.example.demo.UnitModel.UserModel.User;
+ import org.springframework.data.jpa.repository.JpaRepository;
+ 
+ public interface UsersRepository extends JpaRepository<User, String> {
+-
+ }
+\ No newline at end of file
+Index: src/main/java/com/example/demo/UtilCode/WebSocket/EventListener/ConnectingEvent.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UtilCode/WebSocket/EventListener/ConnectingEvent.java b/src/main/java/com/example/demo/WebSocketManagement/EventManagement/ConnectingEvent.java
+rename from src/main/java/com/example/demo/UtilCode/WebSocket/EventListener/ConnectingEvent.java
+rename to src/main/java/com/example/demo/WebSocketManagement/EventManagement/ConnectingEvent.java
+--- a/src/main/java/com/example/demo/UtilCode/WebSocket/EventListener/ConnectingEvent.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/main/java/com/example/demo/WebSocketManagement/EventManagement/ConnectingEvent.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,8 +1,7 @@
+-package com.example.demo.UtilCode.WebSocket.EventListener;
++package com.example.demo.WebSocketManagement.EventManagement;
+ 
+-import com.example.demo.UserCode.methods.UserStatusChange;
+-import com.example.demo.UserCode.UserModel.UserStatus;
+-import jakarta.annotation.PreDestroy;
++import com.example.demo.UserManagemeng.Methods.UserStatusChange;
++import com.example.demo.UnitModel.UserModel.UserStatus;
+ import org.springframework.beans.factory.annotation.Autowired;
+ import org.springframework.context.event.EventListener;
+ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
+@@ -10,20 +9,13 @@
+ import org.springframework.web.socket.messaging.SessionConnectEvent;
+ import org.springframework.web.socket.messaging.SessionDisconnectEvent;
+ 
+-import java.time.Instant;
+-import java.util.concurrent.ExecutorService;
+-import java.util.concurrent.Executors;
+-import java.util.concurrent.TimeUnit;
+-
+-
+ @Component
+ public class ConnectingEvent {
+     @Autowired
+     private UserStatusChange userStatusChange;
+-    private final static ExecutorService STATUS_EVENT_THREAD = Executors.newFixedThreadPool(20);
+     @EventListener
+     public void handleConnect(SessionConnectEvent event) {
+-        STATUS_EVENT_THREAD.submit(() -> {
++        Thread.startVirtualThread(() -> {
+             StompHeaderAccessor headerAccessor = StompHeaderAccessor.wrap(event.getMessage());
+             String id = headerAccessor.getFirstNativeHeader("id");
+             if (id == null) {
+@@ -38,7 +30,7 @@
+     }
+     @EventListener
+     public void handleDisconnect(SessionDisconnectEvent event) {
+-        STATUS_EVENT_THREAD.submit(() -> {
++        Thread.startVirtualThread(() -> {
+             StompHeaderAccessor headerAccessor = StompHeaderAccessor.wrap(event.getMessage());
+             String id = headerAccessor.getFirstNativeHeader("id");
+             if (id == null) {
+@@ -51,18 +43,4 @@
+             }
+         });
+     }
+-    @PreDestroy
+-    private void cleanThrow() {
+-        STATUS_EVENT_THREAD.shutdown();
+-        try {
+-            if (!STATUS_EVENT_THREAD.awaitTermination(5, TimeUnit.SECONDS)) {
+-                STATUS_EVENT_THREAD.shutdownNow();
+-            }
+-        } catch (InterruptedException exception) {
+-            STATUS_EVENT_THREAD.shutdownNow();
+-            System.out.println("Не все задачи были выполнены в пуле потоков: " + Instant.now());
+-            Thread.currentThread().interrupt();
+-            System.out.println("Статус прерывания потока:" + Thread.currentThread().isInterrupted());
+-        }
+-    }
+ }
+Index: src/main/java/com/example/demo/WebSocketManagement/TextMessageController.java
+===================================================================
+diff --git a/src/main/java/com/example/demo/WebSocketManagement/TextMessageController.java b/src/main/java/com/example/demo/WebSocketManagement/TextMessageController.java
+new file mode 100644
+--- /dev/null	(revision c988de949bd9574b9612f4f9548e6e903369322f)
++++ b/src/main/java/com/example/demo/WebSocketManagement/TextMessageController.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -0,0 +1,34 @@
++package com.example.demo.WebSocketManagement;
++import com.example.demo.MessageManagement.Methods.Message;
++import com.example.demo.UnitModel.MessageModel.TextMessage;
++import com.example.demo.UnitModel.UserModel.User;
++import jakarta.validation.Valid;
++import org.springframework.beans.factory.annotation.Autowired;
++import org.springframework.messaging.handler.annotation.MessageMapping;
++import org.springframework.messaging.handler.annotation.Payload;
++
++import org.springframework.stereotype.Controller;
++
++@Controller
++
++public class TextMessageController {
++        @Autowired
++        private Message message;
++
++        //Получаем от клиента на send и в случае userStatus == Online сразу передаем
++        @MessageMapping("/chat/send")
++        public void getMessagee(@Valid @Payload TextMessage textMessage) {
++                Thread.startVirtualThread(() -> {
++                        message.sendText(textMessage);
++                });
++        }
++
++        //Отдаем по определенному запросу, если юзер был offline, клиент слушает на get
++        @MessageMapping("/chat/get")
++        public void sendMessage(@Valid @Payload User user) {
++                Thread.startVirtualThread(() -> {
++                message.getText(user.getId());
++                });
++        }
++    }
++
+Index: src/main/java/com/example/demo/UtilCode/WebSocket/WebSocketConfig.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/main/java/com/example/demo/UtilCode/WebSocket/WebSocketConfig.java b/src/main/java/com/example/demo/WebSocketManagement/WebSocketConfig.java
+rename from src/main/java/com/example/demo/UtilCode/WebSocket/WebSocketConfig.java
+rename to src/main/java/com/example/demo/WebSocketManagement/WebSocketConfig.java
+--- a/src/main/java/com/example/demo/UtilCode/WebSocket/WebSocketConfig.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/main/java/com/example/demo/WebSocketManagement/WebSocketConfig.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,4 +1,4 @@
+-package com.example.demo.UtilCode.WebSocket;
++package com.example.demo.WebSocketManagement;
+ 
+ import org.springframework.context.annotation.Configuration;
+ import org.springframework.messaging.simp.config.MessageBrokerRegistry;
+Index: src/main/resources/application.properties
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>ISO-8859-1
+===================================================================
+diff --git a/src/main/resources/application.properties b/src/main/resources/application.properties
+--- a/src/main/resources/application.properties	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/main/resources/application.properties	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -22,5 +22,8 @@
+ 
+ spring.kafka.producer.key-serializer=org.apache.kafka.common.serialization.StringSerializer
+ spring.kafka.producer.value-serializer=org.springframework.kafka.support.serializer.JsonSerializer
++
++
++
+ # Serv
+ server.port=25565
+\ No newline at end of file
+Index: src/test/java/com/example/demo/DemoApplicationTests.java
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+diff --git a/src/test/java/com/example/demo/DemoApplicationTests.java b/src/test/java/com/example/demo/DemoApplicationTests.java
+--- a/src/test/java/com/example/demo/DemoApplicationTests.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ b/src/test/java/com/example/demo/DemoApplicationTests.java	(revision c988de949bd9574b9612f4f9548e6e903369322f)
+@@ -1,7 +1,5 @@
+ package com.example.demo;
+ 
+-import org.junit.jupiter.api.Test;
+-import org.springframework.boot.test.context.SpringBootTest;
+ 
+ @SpringBootTest
+ class DemoApplicationTests {
+Index: src/main/java/com/example/demo/UserCode/Controller/UserIdController.java
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserCode/Controller/UserIdController.java b/src/main/java/com/example/demo/UserCode/Controller/UserIdController.java
+deleted file mode 100644
+--- a/src/main/java/com/example/demo/UserCode/Controller/UserIdController.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ /dev/null	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
+@@ -1,57 +0,0 @@
+-package com.example.demo.UserCode.Controller;
+-
+-import com.example.demo.UserCode.UserModel.FromNum;
+-import com.example.demo.UserCode.UserRepository.UsersNumRepository;
+-import com.example.demo.UtilCode.Exception.UserNotFoundWithId;
+-
+-
+-import com.example.demo.UserCode.UserRepository.UsersRepository;
+-import com.example.demo.UserCode.UserModel.User;
+-import com.example.demo.UserCode.UserModel.UserStatus;
+-import lombok.extern.slf4j.Slf4j;
+-import org.springframework.beans.factory.annotation.Autowired;
+-import org.springframework.util.DigestUtils;
+-import org.springframework.web.bind.annotation.*;
+-import jakarta.validation.Valid;
+-
+-import java.nio.charset.StandardCharsets;
+-import java.util.Random;
+-@Slf4j
+-@RestController
+-public class UserIdController {
+-    @Autowired
+-    private UsersNumRepository usersNumRepository;
+-    @Autowired
+-    private UsersRepository usersRepository;
+-    @GetMapping("/get-id-user/{id}")
+- public User GetUser(@PathVariable String id) {
+-     return usersRepository.findById(id)
+-             .orElseThrow(() -> new UserNotFoundWithId(id));
+- }
+-    @PatchMapping("/update-user/{id}")
+- public User UpdateUser(@PathVariable String id, @RequestBody @Valid User user) {
+- User changeUser = usersRepository.findById(id)
+-                .orElseThrow(() -> new UserNotFoundWithId(id));
+-
+- changeUser.setAvatarUrl(user.getAvatarUrl());
+- changeUser.setPassword(user.getPassword());
+- changeUser.setNumber(user.getNumber());
+- changeUser.setAge(user.getAge());
+- changeUser.setName(user.getName());
+- return usersRepository.save(changeUser);
+-    }
+-   @PostMapping("/add/user")
+- public User CreateUser(@RequestBody @Valid User user) {
+-        String id = DigestUtils.md5DigestAsHex(user.getNumber().getBytes(StandardCharsets.UTF_8));
+-        if(usersRepository.existsById(id)) {
+-            Random rand = new Random();
+-            int x = rand.nextInt(0, 1000);
+-            user.setId(id + "salt" + x);
+-        }
+-            FromNum lowUser = new FromNum(user.getNumber(), user.getId());
+-            usersNumRepository.save(lowUser);
+-       user.setUserStatus(UserStatus.OFFLINE);
+-            return usersRepository.save(user);
+-   }
+-
+-}
+\ No newline at end of file
+Index: src/main/java/com/example/demo/UserCode/Controller/UserNumController.java
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserCode/Controller/UserNumController.java b/src/main/java/com/example/demo/UserCode/Controller/UserNumController.java
+deleted file mode 100644
+--- a/src/main/java/com/example/demo/UserCode/Controller/UserNumController.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ /dev/null	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
+@@ -1,32 +0,0 @@
+-package com.example.demo.UserCode.Controller;
+-
+-import com.example.demo.UserCode.UserModel.FromNum;
+-import com.example.demo.UserCode.UserModel.User;
+-import com.example.demo.UserCode.UserRepository.UsersNumRepository;
+-import com.example.demo.UserCode.UserRepository.UsersRepository;
+-import com.example.demo.UtilCode.Exception.UserNotFoundWithId;
+-import com.example.demo.UtilCode.Exception.UserNotFoundWithNum;
+-import lombok.extern.slf4j.Slf4j;
+-import org.springframework.beans.factory.annotation.Autowired;
+-import org.springframework.web.bind.annotation.GetMapping;
+-import org.springframework.web.bind.annotation.PatchMapping;
+-import org.springframework.web.bind.annotation.PathVariable;
+-import org.springframework.web.bind.annotation.RestController;
+-@Slf4j
+-@RestController
+-public class UserNumController {
+-    @Autowired
+-    private UsersNumRepository usersNumRepository;
+-    @Autowired
+-    private UsersRepository usersRepository;
+-    @GetMapping("/get-num-user/{num}")
+-  public User GetUser(@PathVariable String num) {
+-        FromNum lowUser = usersNumRepository.findById(num)
+-                .orElseThrow(()
+-                        -> new UserNotFoundWithNum(num));
+-
+-        return usersRepository.findById(lowUser.getId())
+-                .orElseThrow(()
+-                    -> new UserNotFoundWithId(lowUser.getId()));
+-    }
+-}
+Index: src/main/java/com/example/demo/UserCode/Controller/UserStatusController.java
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserCode/Controller/UserStatusController.java b/src/main/java/com/example/demo/UserCode/Controller/UserStatusController.java
+deleted file mode 100644
+--- a/src/main/java/com/example/demo/UserCode/Controller/UserStatusController.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ /dev/null	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
+@@ -1,39 +0,0 @@
+-package com.example.demo.UserCode.Controller;
+-
+-import com.example.demo.UtilCode.Exception.UserNotFoundWithId;
+-import com.example.demo.UserCode.UserRepository.UsersRepository;
+-import com.example.demo.UserCode.UserModel.User;
+-import com.example.demo.UserCode.UserModel.UserStatus;
+-import org.springframework.beans.factory.annotation.Autowired;
+-import org.springframework.web.bind.annotation.RestController;
+-
+-import java.time.Instant;
+-
+-@RestController
+-public class UserStatusController {
+-   @Autowired
+-    private UsersRepository usersRepository;
+-
+-    public User UserOnline(String id) {
+-        User user = usersRepository.findById(id)
+-                .orElseThrow(()
+-                        -> new UserNotFoundWithId(id));
+-        user.setUserStatus(UserStatus.ONLINE);
+-        return usersRepository.save(user);
+-    }
+-    public User UserOffline(String id) {
+-        User user = usersRepository.findById(id)
+-                .orElseThrow(()
+-                        -> new UserNotFoundWithId(id));
+-        user.setLastOnline(Instant.now());
+-        user.setUserStatus(UserStatus.OFFLINE);
+-        return usersRepository.save(user);
+-    }
+-    public User UserIDLE(String id) {
+-        User user = usersRepository.findById(id)
+-                .orElseThrow(()
+-                        -> new UserNotFoundWithId(id));
+-        user.setUserStatus(UserStatus.IDLE);
+-        return usersRepository.save(user);
+-    }
+-}
+Index: src/main/java/com/example/demo/UserCode/UserModel/FromNum.java
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserCode/UserModel/FromNum.java b/src/main/java/com/example/demo/UserCode/UserModel/FromNum.java
+deleted file mode 100644
+--- a/src/main/java/com/example/demo/UserCode/UserModel/FromNum.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ /dev/null	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
+@@ -1,23 +0,0 @@
+-package com.example.demo.UserCode.UserModel;
+-
+-import jakarta.persistence.Column;
+-import jakarta.persistence.Entity;
+-import jakarta.persistence.Id;
+-import jakarta.persistence.Table;
+-import jakarta.validation.constraints.NotNull;
+-import lombok.AllArgsConstructor;
+-import lombok.Data;
+-import lombok.NoArgsConstructor;
+-@Entity
+-@Data
+-@Table(name = "FindUserWithNum")
+-@NoArgsConstructor
+-@AllArgsConstructor
+-public class FromNum {
+-    @Id
+-    @Column(name = "number")
+-    private String number;
+-    @Column(name = "user_Id")
+-    @NotNull
+-    private String id;
+-}
+Index: src/main/java/com/example/demo/UserCode/UserModel/UserStatusEvent.java
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserCode/UserModel/UserStatusEvent.java b/src/main/java/com/example/demo/UserCode/UserModel/UserStatusEvent.java
+deleted file mode 100644
+--- a/src/main/java/com/example/demo/UserCode/UserModel/UserStatusEvent.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ /dev/null	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
+@@ -1,17 +0,0 @@
+-package com.example.demo.UserCode.UserModel;
+-
+-import jakarta.validation.constraints.NotNull;
+-import lombok.AllArgsConstructor;
+-import lombok.Data;
+-import lombok.NoArgsConstructor;
+-
+-@Data
+-@NoArgsConstructor
+-@AllArgsConstructor
+-public class UserStatusEvent {
+-    @NotNull
+-    private String userId;
+-
+-    }
+-
+-
+Index: src/main/java/com/example/demo/UserCode/UserRepository/UsersNumRepository.java
+===================================================================
+diff --git a/src/main/java/com/example/demo/UserCode/UserRepository/UsersNumRepository.java b/src/main/java/com/example/demo/UserCode/UserRepository/UsersNumRepository.java
+deleted file mode 100644
+--- a/src/main/java/com/example/demo/UserCode/UserRepository/UsersNumRepository.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ /dev/null	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
+@@ -1,7 +0,0 @@
+-package com.example.demo.UserCode.UserRepository;
+-
+-import com.example.demo.UserCode.UserModel.FromNum;
+-import org.springframework.data.jpa.repository.JpaRepository;
+-
+-public interface UsersNumRepository extends JpaRepository<FromNum, String> {
+-}
+Index: src/main/java/com/example/demo/UtilCode/Kafka/Consumer/MessageConsumer.java
+===================================================================
+diff --git a/src/main/java/com/example/demo/UtilCode/Kafka/Consumer/MessageConsumer.java b/src/main/java/com/example/demo/UtilCode/Kafka/Consumer/MessageConsumer.java
+deleted file mode 100644
+--- a/src/main/java/com/example/demo/UtilCode/Kafka/Consumer/MessageConsumer.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ /dev/null	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
+@@ -1,19 +0,0 @@
+-package com.example.demo.UtilCode.Kafka.Consumer;
+-import com.example.demo.UtilCode.WebSocket.MessageSocketController;
+-import com.example.demo.UtilCode.MessageModel.TextMessage;
+-import org.springframework.beans.factory.annotation.Autowired;
+-import org.springframework.kafka.annotation.KafkaListener;
+-import org.springframework.stereotype.Service;
+-
+-@Service
+-public class MessageConsumer {
+-    @Autowired
+-    private MessageSocketController messageSocketController;
+-    @KafkaListener(topics = "user-mess", groupId = "messenger group")
+-    public void GetMessage(TextMessage textMessage) {
+-        System.out.println("Кафка отправила сообщение: " + textMessage);
+-        messageSocketController.SendMessage(textMessage.getToUser(), textMessage);
+-
+-    }
+-
+-}
+\ No newline at end of file
+Index: src/main/java/com/example/demo/UtilCode/WebSocket/MessageSocketController.java
+===================================================================
+diff --git a/src/main/java/com/example/demo/UtilCode/WebSocket/MessageSocketController.java b/src/main/java/com/example/demo/UtilCode/WebSocket/MessageSocketController.java
+deleted file mode 100644
+--- a/src/main/java/com/example/demo/UtilCode/WebSocket/MessageSocketController.java	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
++++ /dev/null	(revision 6513ad332093cd36e945ac28a5bc9cc6e71bf277)
+@@ -1,54 +0,0 @@
+-package com.example.demo.UtilCode.WebSocket;
+-
+-import com.example.demo.UserCode.UserRepository.UsersRepository;
+-import com.example.demo.UtilCode.Exception.SendToNullUser;
+-
+-import com.example.demo.UtilCode.MessageModel.TextMessage;
+-import org.springframework.beans.factory.annotation.Autowired;
+-import org.springframework.kafka.core.KafkaTemplate;
+-import org.springframework.messaging.handler.annotation.MessageMapping;
+-import org.springframework.messaging.handler.annotation.Payload;
+-import org.springframework.messaging.simp.SimpMessagingTemplate;
+-import org.springframework.stereotype.Controller;
+-
+-@Controller
+-
+-public class MessageSocketController {
+-
+-        @Autowired
+-        private SimpMessagingTemplate messagingTemplate;
+-        @Autowired
+-        private KafkaTemplate<String, TextMessage> kafkaTemplate;
+-        @Autowired
+-        private UsersRepository usersRepository;
+-        //Слушаем, клиент отдает на send
+-        @MessageMapping("/chat/send")
+-        public void GetMessage(@Payload TextMessage textMessage) {
+-            String toUser = textMessage.getToUser();
+-        kafkaTemplate.send("chat-mess", toUser, textMessage);
+-        }
+-        //Отдаем, клиент слушает на get
+-        public void SendMessage(String id, TextMessage textMessage) {
+-            if (usersRepository.existsById(textMessage.getToUser())) {
+-                messagingTemplate.convertAndSendToUser(
+-                        id,
+-                        "/chat/get",
+-                        textMessage);
+-            } else {
+-                messagingTemplate.convertAndSendToUser(
+-                        textMessage.getFromUser(),
+-                        "/chat/get",
+-                        textMessage);
+-                new SendToNullUser(textMessage.getFromUser());
+-            }
+-        }
+-        @MessageMapping("/chat/addUser")
+-        public void addUser(@Payload TextMessage textMessage) {
+-            messagingTemplate.convertAndSendToUser(
+-                    textMessage.getToUser(),
+-                    "/queue/messages",
+-                    textMessage
+-            );
+-        }
+-    }
+-
