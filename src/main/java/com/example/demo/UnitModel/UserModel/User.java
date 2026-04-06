@@ -21,9 +21,13 @@ public class User {
     @Column(nullable = true)
     private String avatarUrl;
     @Column(nullable = false, unique = true)
-    @NotNull(message = "Имя обязательно")
+    @NotNull(message = "Никнейм обязателен")
     @Size(min = 3, max = 99, message = "Имя должно быть от 3 до 99 символов")
+    private String nickname;
+    @Column(nullable = true)
     private String name;
+    @Column(nullable = true)
+    private String family;
 
     @Column(nullable = false)
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)

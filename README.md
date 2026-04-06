@@ -63,7 +63,7 @@
 
 ```bash
 # Клонировать репозиторий
-git clone https://github.com/iiiooorrr2010-stack/Messenger-Server-BETA-v2.0-lightweight
+git clone https://github.com/iiiooorrr2010-stack/Messenger-Server-BETA-v2.1-lightweight
 cd Messenger-Server-BETA-v2.0-lightweight
 #Создать и настроить .env файл в корне проекта:
 DB_PASSWORD=

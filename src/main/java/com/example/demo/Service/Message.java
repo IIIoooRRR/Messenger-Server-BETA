@@ -1,12 +1,11 @@
-package com.example.demo.MessageManagement.Methods;
+package com.example.demo.Service;
 
 import com.example.demo.Exception.UserNotFoundWithId;
 import com.example.demo.MessageManagement.MessageRepository.MessageRepository;
 import com.example.demo.UnitModel.MessageModel.TextMessage;
 import com.example.demo.UnitModel.UserModel.User;
 import com.example.demo.UnitModel.UserModel.UserStatus;
-import com.example.demo.UserManagemeng.Methods.Account;
-import com.example.demo.UserManagemeng.UserRepository.UsersRepository;
+import com.example.demo.UserManagement.UserRepository.UsersRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -14,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 
 @Component
 public class Message {
@@ -36,10 +36,7 @@ public class Message {
     @Transactional
     public void getText(String toUser) {
         if (usersRepository.existsById(toUser)) {
-            List<TextMessage> messageToUser = messageRepository.findByToUser(toUser);
-                if(messageToUser.isEmpty()) {
-                    return;
-                }
+           List<TextMessage> messageToUser = messageRepository.findByToUser(toUser);
             messagingTemplate.convertAndSendToUser(toUser, "/queue/messages", messageToUser);
                 messageRepository.deleteAll(messageToUser);
         } else {

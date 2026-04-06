@@ -1,8 +1,8 @@
-package com.example.demo.UserManagemeng.Controller;
+package com.example.demo.UserManagement.Controller;
 
 import com.example.demo.Exception.UserNameIndexNotFound;
 import com.example.demo.UnitModel.UserModel.User;
-import com.example.demo.UserManagemeng.UserRepository.UsersRepository;
+import com.example.demo.UserManagement.UserRepository.UsersRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
