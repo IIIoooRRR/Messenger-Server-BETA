@@ -6,7 +6,7 @@
 
 ## 🚀 Технологии
 - **Java 25**
-- **Spring Boot 3.4.2** (Web, JPA, WebSocket, Validation)
+- **Spring Boot 4.0.0** (Web, JPA, WebSocket, Validation)
 - **PostgreSQL / H2** - хранение пользователей и оффлайн-сообщений
 - **Lombok** - уменьшение шаблонного кода
 - **Maven** - сборка
@@ -65,13 +65,10 @@
 
 ```bash
 # Клонировать репозиторий
-git clone https://github.com/iiiooorrr2010-stack/Messenger-Server-BETA-v2.1-lightweight
-cd Messenger-Server-BETA-v2.2-lightweight
+git clone https://github.com/iiiooorrr2010-stack/Messenger-Server-BETA
+cd Messenger-Server-BETA
 #Создать и настроить .env файл в корне проекта:
-DB_PASSWORD=
-VER_CLIENT = 
-P12_PASSWORD =
-POSTGRES_PASSW=
-POSTGRES_USER = 
+VER_CLIENT = #видимые CORS
+#Настроить бд в application.properties
 # Запустить приложение
 ./mvnw spring-boot:run
